@@ -8,32 +8,32 @@ Using the Credit Approval dataset, we apply Decision Tree models to evaluate the
 
 We compare two models:
 
-1. Reduced Model – trained on complete cases only (excluding missing data).
-2. Imputed Model – trained on data with missing values filled using the missRanger Random Forest-based imputation method.
+1. **Reduced Model** – trained on complete cases only (excluding missing data).
+2. **Imputed Model** – trained on data with missing values filled using the missRanger Random Forest-based imputation method.
    
 ## Key Takeaways
 
 🔹 Overall Accuracy Remains Similar (~87%)
 
-- Both models perform nearly identically in terms of overall predictive accuracy.
+- *Both models perform nearly identically in terms of overall predictive accuracy.*
   
 
 🔹 Imputation Improves Sensitivity (~93% vs. 86%)
 
-- The imputed model is better at identifying negative instances (- class).
-- Suggests imputation helps the model capture more patterns from previously missing data.
+- *The imputed model is better at identifying negative instances (- class).*
+- *Suggests imputation helps the model capture more patterns from previously missing data.*
 
 
 🔹 Imputation Reduces Specificity (~78-80% vs. 86-89%)
 
-- The reduced model performs better at identifying positive instances (+ class).
-- Imputation may introduce noise or overfitting, making it harder to correctly classify + cases.
+- *The reduced model performs better at identifying positive instances (+ class).*
+- *Imputation may introduce noise or overfitting, making it harder to correctly classify + cases.*
 
 
 🔹 Minimal Missingness (0.6%) → Limited Impact of Imputation
 
-- Since missing data is low, excluding incomplete cases still preserves most of the dataset.
-- The reduced model maintains comparable performance with a simpler structure.
+- *Since missing data is low, excluding incomplete cases still preserves most of the dataset.*
+- *The reduced model maintains comparable performance with a simpler structure.*
 
 
 🔹 When is Imputation More Useful?
