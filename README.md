@@ -1,6 +1,8 @@
 # Exploring-Missing-Data-Imputation
 Missing Data & Imputation: Does Made-up Data Work?
 
+**See Credit_Approval.html**
+
 ## Project Rundown
 One of the biggest challenges in data science is handling missing data, as it can lead to biased models and reduced accuracy. This project explores whether imputation techniques—which estimate missing values based on existing patterns—can effectively substitute for real data while maintaining model performance.
 
@@ -10,6 +12,8 @@ We compare two models:
 
 1. **Reduced Model** – trained on complete cases only (excluding missing data).
 2. **Imputed Model** – trained on data with missing values filled using the missRanger Random Forest-based imputation method.
+
+
    
 ## Key Takeaways
 
