@@ -1,5 +1,5 @@
 # Exploring-Missing-Data-Imputation
-[Missing Data & Imputation: Does Made-up Data Work?](https://jchu630.github.io/Exploring-Missing-Data-Imputation/
+[Missing Data & Imputation: Does Made-up Data Work?](https://jchu630.github.io/Exploring-Missing-Data-Imputation/Credit_Approval.html)
 
 ## Project Rundown
 One of the biggest challenges in data science is handling missing data, as it can lead to biased models and reduced accuracy. This project explores whether imputation techniques—which estimate missing values based on existing patterns—can effectively substitute for real data while maintaining model performance.
