@@ -1,0 +1,424 @@
+---
+title: "Missing Data & Imputation: Does Made-up Data Work?"
+author: "Jadon Chu"
+date: "30 Sep 2024"
+output: 
+  html_document:
+    toc: yes
+    toc_depth: 3
+    number_sections: no
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+---
+
+# Introduction
+
+One of the challenges in working with data sets is the problem of missing data, which can lead to biased results and reduced model accuracy. A solution is to employ imputation techniques to fill in the missing values. Imputation can help maintain the integrity of the dataset by replacing missing values with estimated ones, which may allow for more robust and reliable model training. 
+
+In this project, we will investigate whether these made-up data points can effectively substitute for the missing data and still produce accurate and reliable results.
+
+# Overview
+
+We will be using Decision Tree models on the [Credit Approval Dataset](https://archive.ics.uci.edu/dataset/27/credit+approval). The data name and values have been masked to meaningless symbols to ensure the confidentiality of the data.
+
+The data set contains a good mix of attributes – categorical (nominal) and continuous. Variables A1 - A15 are predictors; and A16 is the binary response (y) indicating if a credit application is been approved (‘`+`’) or not (‘`-`’).
+
+
+```{r setup, include=TRUE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# load libraries
+library(tidyverse)
+library(naniar)
+library(rpart)
+library(caret)
+library(missRanger)
+
+```
+
+# 1. Data Exploration
+
+### Loading the Data
+```{r}
+# Load crx.data
+data <- read_csv("crx.data", col_names = FALSE)
+colnames(data) <- paste0("A", sprintf("%02d", 1:16)) # Label column names A01-A16
+glimpse(data)
+```
+
+The data looks good. We just note that the values of predictor variables A02 and A11 are numbers that are the character type, not numerical.   
+
+### Exploring the Pattern of Missingness
+
+## Finding the predictor variables with the lowest and highest % of missing data:
+
+```{r}
+# Get percentage of missing data data frame
+percent_missing <- c() # initialize vector
+for (i in 1:ncol(data)) {
+  col_name <- colnames(data[i])
+  num_missing <- sum(data[[col_name]] == "?")
+  percent_missing[i] <- (num_missing / nrow(data)) * 100
+}
+missing_percent_df <- data.frame(Variable = colnames(data), Percentage = percent_missing)
+missing_percent_df # show dataframe of the percentage of missing values for each variable
+
+# Distrbution of missing %'s
+ggplot(missing_percent_df, aes(x = Variable, y = Percentage)) +
+  geom_bar(stat = "identity", fill = "steelblue")  +
+  geom_text(aes(label=round(Percentage, 2)), 
+            position=position_nudge(y=-0.1)) +
+  labs(title = "Percentage of Missing Data", x = "Variable", y = "Percentage (%)") +
+  theme_minimal()
+```
+
+There are multiple variables with 0% missing data. 
+
+These variables are:
+
+```{r}
+missing_percent_df |> filter(Percentage == 0) |> select(Variable)
+```
+
+Conveniently, the target `A16` is one of these variables. 
+
+On the other hand, the variable with the highest missing data % is: 
+
+```{r}
+missing_percent_df[which.max(missing_percent_df$Percentage),] # show variable with highest missing percentage
+```
+
+as shown from the distribution chart above.
+
+## Missing Together? Investigating any Group(s) of Predictors that are Co-missing
+
+We can also see from the distribution of missing percentages that the following predictor variables have the same percentages of missing data: 
+
+- `A01` and `A02` with 1.7% missing data
+
+- `A04` and `A05` with 0.9% missing data
+
+- `A06` and `A07` with 1.3% missing data
+
+We will use the `naniar` package to visualize some missing data. But all missing values are marked as '?', so we will first change them to NA. 
+
+```{r}
+any(is.na(data)) # No NAs
+data[data == "?"] <- NA
+any(is.na(data)) # Successfully changed
+
+```
+Now visualizing the missing data:
+
+```{r}
+vis_miss(data)
+```
+
+The overall missing percentage in this dataset is quite low at 0.6%, suggesting that missing values are not strongly correlated across predictors. While the initial visualization suggests that a small number of observations share missing values across the same predictors (e.g., `A04`, `A05`, `A06`, `A07`, `A14`), we will explore the patterns of co-missing data further. 
+
+
+```{r}
+gg_miss_upset(data)
+```
+
+From this visualization, most of the missing data are not co-missing. The largest group of co-missing values ācross the entire dataset consists of 6 observations missing in `A06`, `A07`, and `A14`, followed by 2 observations co-missing in `A06`, `A07`, and `A01`. The remaining groups each have only 1 observation with co-missing values, which is relatively insignificant. Overall, apart from these small groups, missing data in this dataset largely occur independently across predictors, as supported by the previous visualization.
+
+
+## Comparing Missingness for each Class of the Response
+
+```{r}
+# First convert response variable to factor
+data$A16 <- as.factor(data$A16)
+#levels(data$A16)
+
+vis_miss(data, facet=A16)
+```
+
+It appears there is more missing data for credit applications that have not been approved compared to those that have been approved. In particular, predictors `A01` and `A02` show more missing values in the not approved (`-`) class than in the approved (`+`) class. The co-missing pattern observed from before between `A04`, `A05`, `A06`, `A07`, and `A14` seems to be present in both classes. This may suggest that the missingness pattern is not random and could be influenced by the response class.
+
+Comparing the missing data % for each predictor between the two classes:
+
+```{r}
+# Make table
+missing_percent_class <- data |>
+  group_by(A16) |>
+  summarise(across(everything(), ~ sum(is.na(.)) / n() * 100))
+missing_percent_class
+
+# Reshape data to long format
+data_long <- pivot_longer(missing_percent_class, cols = -A16, names_to = "Variable", values_to = "Value")
+
+ggplot(data_long, aes(x = Variable, y = Value, fill = A16)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Distribution of Missingness of the Variables",
+       x = "Variable",
+       y = "Percentage (%)")  +
+  geom_text(aes(label = round(Value, 2)), 
+            position = position_dodge(width = 0.9), 
+            vjust = -0.5, size = 2.5) +
+  scale_fill_manual(values = c("-" = "coral", "+" = "cyan")) +
+  theme_minimal()
+
+```
+
+Predictors `A01` and `A02` have higher percentages of missing values in the `-` class compared to the `+` class (2.35% and 2.61% for the `-` class, and 0.98% and 0.65% for the '+' class, respectively). Conversely, predictors `A04` and `A05` show lower percentages of missing values in the `-` class compared to the `+` class (0.52% for both predictors in the `-` class versus 1.30% for both in the `+` class). However, predictors `A06` and `A07` have nearly equal percentages of missing values between the two classes (1.30% each). These differences and similarities suggest that the missingness pattern is not random and could be influenced by the response class.
+
+
+```{r}
+data_class1 <- data |> filter(A16 == "-")
+gg_miss_upset(data_class1)
+
+data_class2 <- data |> filter(A16 == "+")
+gg_miss_upset(data_class2)
+
+```
+
+Comparing the missingness between the two classes, there is a clear difference. Overall, the `-` class has more missing values than the `+` class. In the `-` class, most missing data are independently missing, with at most 2 predictors co-missing in groups such as `A06`, `A07`, `A14` and `A06`, `A07`, `A01`. In contrast, in the `+` class, the largest co-missing group involves 5 predictors (`A04`, `A05`, `A06`, `A07`, and `A14`), and the most frequent singular missing data involve at most 2 observations. 
+
+Overall, the missing data in the credit application dataset is relatively sparse. The `-` class (applications not approved) has more missing data than the `+` class, particularly in predictors `A01` and `A02.` Additionally, we identified some co-missing patterns, especially between `A06`, `A07`, and `A14.` These findings suggest that missingness in the dataset is not random and may be influenced by the outcome (approval or rejection) of the credit applications.
+
+
+# 2. Fitting the Decision Trees
+
+### Splitting the Data into 80% Training and 20% Testing sets
+
+First check the proportions in the original dataset: 
+
+```{r}
+proportions <- data |> group_by(A16) |> count() |> summarise(proportion = n/nrow(data))
+
+# Bar chart
+ggplot(proportions, aes(x = A16, y = proportion, fill = A16)) +
+  geom_bar(stat = "identity", width = 0.5) +
+  labs(title = "Proportion of the Classes",
+       x = "Class",
+       y = "Proportion",
+       fill = "Class") +
+  geom_text(aes(label = round(proportion, 2)), 
+            position=position_nudge(y=-0.04)) +  # Adjust label position
+  scale_fill_manual(values = c("-" = "coral", "+" = "cyan"), labels = c('-', '+')) +
+  theme_minimal()
+```
+
+Keep in mind these proportions when splitting the data.  
+
+To avoid future factoring issues, convert variables that are continuous (by definition) but are stored as character values in the data.
+
+```{r}
+# Convert the following columns to numeric to avoid factor leveling issues on unseen data
+data$A02 <- as.numeric(data$A02)
+data$A11 <- as.numeric(data$A11)
+data$A14 <- as.numeric(data$A14)
+
+```
+
+
+
+```{r}
+# Use createDataParition to ensure class proportions of response variable is preserved in both train and test datasets. 
+set.seed(126837131) # for reproducibility
+
+train_index <- createDataPartition(data$A16, p= 0.8, list = FALSE)
+
+train_data <- data[train_index,]
+test_data <- data[-train_index,]
+
+```
+
+Checking the proportions of the train and test datasets with the original dataset:
+```{r}
+prop.table(table(train_data$A16))
+prop.table(table(test_data$A16))
+```
+Both proportions are nearly exactly the same as the proportions of the original dataset.
+
+Now, manipulating the data to observe the effects of removing the missing values vs imputing the data. 
+
+### Fitting a `rpart` Model on a Reduced-Size-but-Completed (Training) Data
+
+Removing the missing records from the data:
+
+```{r}
+train_data_reduced <- na.omit(train_data)
+
+# check dimensions
+dim(train_data_reduced)
+```
+How many rows were removed: 
+
+```{r}
+nrow(train_data) - nrow(train_data_reduced)
+```
+
+
+Fitting the model:
+
+```{r}
+# Fit the decision tree using rpart
+tree_model <- rpart(A16 ~ ., data=train_data_reduced, method='class')
+print(tree_model)
+```
+
+Since we are purely investigating the effects of imputation, we will not prune our trees. This allows us to focus on comparing the full structures of the models and their performance, without introducing additional complexity through pruning.  
+
+### Imputing the Missing Data and Refitting `rpart` on the Imputed Training Dataset
+
+```{r}
+train_data_imputed <- missRanger(train_data, 
+                                 pmm.k=5, # predict 5 closest 
+                                 seed=126837131, 
+                                 verbose=2, # level of output messages 
+                                 returnOOB = TRUE) # return Out-Of-Bag predictions
+dim(train_data_imputed)
+
+```
+
+Check if there are any missing values left. 
+```{r}
+sum(is.na(train_data_imputed))
+```
+There are no missing values in `train_data_imputed` dataset. 
+
+Now fitting `rpart` to the imputed dataset: 
+
+```{r}
+tree_model_imputed <- rpart(A16 ~ ., data=train_data_imputed, method='class')
+print(tree_model_imputed)
+```
+
+### Comparing the Two Tree-Structures
+
+Visualizing the trees: 
+
+**- Reduced training data:**
+
+```{r}
+# Tree 1: reduced training data (no missing values)
+plot(tree_model, margin=0.01) ; text(tree_model, cex = 0.9)
+```
+
+**- Imputed training data**
+
+```{r}
+# Tree 2: imputed training data
+plot(tree_model_imputed, margin=0.01); text(tree_model_imputed, cex = 0.9)
+```
+
+Summaries of the Trees: 
+
+**- Reduced training dataset:** 
+
+```{r}
+summary(tree_model)
+```
+**- Imputed dataset:** 
+
+```{r}
+summary(tree_model_imputed)
+
+```
+
+Both trees use `A09` < 0.5 as the primary split, highlighting its critical role role in predicting credit application outcomes. This is reflected in its high importance score of 34% in the reduced model and 31% in the imputed model. While both trees share this fundamental structure, the imputed tree uses more variables in its sub-branches, indicating a more complex decision-making process. 
+
+**Similarities:**
+
+- The most important variables are almost identical between the two models. `A09` is the top contributor with the highest importance scores followed by `A11` and `A10` (both 16%), `A08` (13%), and `A06` and `A15` (9-10%). These variables are consistent and reliable in their predictive power across both models. 
+
+- Both models follow the same initial decision paths beginning with `A09`. If `A09` < 0.5 then the model immediately classifies the application as a `-` (highlights the high predictive strength of this variable, making a clear decision once an application satisfies the condition). But if `A09` >= 0.5, the model goes to a secondary decision based on `A10` < 0.5. However, the sub-branches following this second split differ. 
+
+**Differences: **
+
+- The tree trained on imputed data incorporates additional variables like `A04` and `A02`, which are absent in the reduced data tree. Although these new variables contribute only 1% to overall importance, their inclusion suggests that imputing missing data enables the model to explore a broader set of features. This additional complexity in the imputed tree reflects its ability to capture more nuanced relationships in the dataset.
+
+- The imputed data tree is more balanced in its decision paths following `A10` < 0.5, whereas the reduced data tree shows a more imbalanced structure, where certain decision paths are longer. This difference indicates that the imputed model, with access to more complete information, is able to make more evenly distributed decisions, while the reduced model's decision-making is constrained by fewer available variables.
+
+Hence, for the reduced data tree, the removal of missing values resulted in a tree structure trained on fewer data points. This limited the model's ability to use more variables, leading to a more focused but slightly less flexible decision process. However, by imputing missing values, the model had access to more data and thus used a wider range of features. This resulted in a slightly more complex tree structure with different splits and new variables. Although the new variables contributed minimally to overall importance, their inclusion shows how imputation enables the model to capture a broader range of patterns, which may improve predictive power. 
+
+# 3. Apply Models and Perform Classification
+
+### Applying the Models to the two Different Test Sets
+
+1. The Original Test Data (includes missing data)
+
+```{r}
+# Check for NAs
+sum(is.na(test_data)) # True
+
+# apply tree_model (reduced model) 
+pred_tree <- predict(tree_model, newdata = test_data, type="class")
+
+# apply tree_model_imputed (handles missing data)
+pred_tree_imputed <- predict(tree_model_imputed, newdata=test_data, type="class")
+
+```
+2. The Adjusted Test Data (complete data)
+
+```{r}
+# remove rows with missing data
+test_data_adjusted <- na.omit(test_data)
+
+# check if any missing values
+sum(is.na(test_data_adjusted)) # expect 0
+
+# apply tree_model (reduced model) 
+pred_tree_complete <- predict(tree_model, newdata = test_data_adjusted, type="class")
+
+# apply tree_model_imputed (handles missing data)
+pred_tree_imputed_complete <- predict(tree_model_imputed, newdata=test_data_adjusted, type="class")
+
+```
+
+### Confusion Matrices 
+
+With our two models, we will present 2 confusion matrices for the original test data (with missing values) and 2 confusion matrices for the adjusted test data (no missing values). 
+
+**1. Confusion Matrices for Original Test Data (with missing values):**
+
+```{r}
+# Predictions from tree_model
+conf_tree_original <- confusionMatrix(pred_tree, test_data$A16)
+conf_tree_original
+```
+
+```{r}
+# Predictions from tree_model_imputed
+conf_tree_imputed_original <- confusionMatrix(pred_tree_imputed, test_data$A16)
+conf_tree_imputed_original
+```
+
+**2. Confusion Matrices for Adjusted Test Data (no missing values):**
+```{r}
+# Predictions from tree_model
+conf_tree_adjusted <- confusionMatrix(pred_tree_complete, test_data_adjusted$A16)
+conf_tree_adjusted
+```
+
+```{r}
+# Predictions from tree_model_imputed
+conf_tree_imputed_adjusted <- confusionMatrix(pred_tree_imputed_complete, test_data_adjusted$A16)
+conf_tree_imputed_adjusted
+```
+
+### Comparisons & Comments
+
+Both models perform similarly in terms of overall accuracy (~87%) across both the original and adjusted test datasets. So the effect of missing data imputation on the overall predictive accuracy is minimal. 
+
+However, models using imputed data have consistently higher sensitivity (~93%) compared to the reduced models (~86%). So imputation helps the models better identify the `-` class (correct classification of negative instances). Imputation enables the models to capture patterns from previously missing data, which appears to benefit identifying the `-` class more effectively. 
+
+On the other hand, the specificity of the imputed models (~78-80%) is lower than that of the reduced models (~86-89%). This means that the models with imputed data perform worse in correctly identifying the `+` class. This may be due to the trade-off: while imputation improves sensitivity, it slightly reduces the model's ability to correctly identify `+` cases. 
+
+### Does Imputation Help Here? 
+
+As mentioned, imputation does offer some benefits in terms of model sensitivity which shows that through imputation, it allows the models to utilize more information and hence, enhance the detection of certain patterns. However, this comes at the cost of reduced specificity which suggests that imputation may introduce additional noise or over-fitting, especially when missingness is minimal. In this case, the imputation process may fill in data that does not capture the true patterns and hence, weakening the model's performance. 
+
+For this particular dataset, imputation may not be necessary. As seen from the `vis_miss` visualization, only 0.6% of the data is missing, meaning that the majority of observations are complete. With such a low percentage of missing data, the reduced model still retains a large and diverse portion of the dataset and thus, allows it to perform just as well as the imputed model. In fact, the reduced model (on both the complete and incomplete test datasets) offers a slightly simpler structure and comparable predictive power without introducing potential noise from imputation. 
+
+Therefore, the impact of excluding incomplete cases is minimal and imputation does not significantly improve model performance, as the model does not gain substantial additional information from imputing such a small portion of the data. This explains why both models have similar accuracies and why the benefits of imputation (while present in terms of sensitivity), are relatively minor. 
+
+This imputation model would be more beneficial if the dataset had a larger proportion of missing data. In these type of cases where a significant percentage of the dataset is incomplete, excluding rows with missing values can substantially reduce the size of the training data and lead to biased results, especially if the missingness is non-random. Then, the impact of imputation becomes significant as it preserves the structure of the data and ensures the model can leverage as much information as possible. 
+
+Hence, for this particular dataset, the reduced model may be preferred for its simplicity and comparable performance. However, in datasets where there is likely to be higher levels of missing data, the imputation model would likely be more advantageous, as it helps retain valuable information and ensures a more complete use of the dataset’s patterns. 
+
+
+### EOF
